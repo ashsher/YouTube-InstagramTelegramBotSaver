@@ -2,13 +2,13 @@ import os
 import yt_dlp
 import requests
 import asyncio
-from aiogram import Bot, Dispatcher, types
+import re
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message
-from aiogram import F
 
 # === CONFIG ===
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # use env variable for safety
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # set in env
 GOFILE_API_URL = "https://api.gofile.io"
 
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -27,13 +27,17 @@ def upload_to_gofile(file_path: str) -> str:
     except Exception as e:
         return f"❌ Upload error: {e}"
 
-# --- Download media with yt-dlp ---
-def download_media(url: str, audio_only: bool = False) -> str:
+# --- Download media with yt-dlp + progress ---
+def download_media(url: str, audio_only: bool, progress_callback=None) -> str:
     ydl_opts = {
         "outtmpl": "%(title).80s.%(ext)s",
         "noplaylist": True,
         "quiet": True,
     }
+
+    if progress_callback:
+        ydl_opts["progress_hooks"] = [progress_callback]
+
     if audio_only:
         ydl_opts.update({
             "format": "bestaudio/best",
@@ -69,23 +73,51 @@ async def handle_link(message: Message):
 @dp.callback_query()
 async def process_callback(callback: types.CallbackQuery):
     action, url = callback.data.split("|")
-    await callback.message.edit_text("⏳ Downloading... please wait")
+    status_msg = await callback.message.answer("⏳ Starting download...")
+
+    # Remove ANSI codes
+    def clean_ansi(text: str) -> str:
+        return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            percent = clean_ansi(d.get('_percent_str', '').strip())
+            eta = d.get('eta', '?')
+            speed = clean_ansi(d.get('_speed_str', '').strip())
+            asyncio.create_task(
+                bot.edit_message_text(
+                    chat_id=status_msg.chat.id,
+                    message_id=status_msg.message_id,
+                    text=f"⬇️ Downloading...\nProgress: {percent}\nETA: {eta}s\nSpeed: {speed}"
+                )
+            )
 
     try:
-        file_path = download_media(url, audio_only=(action == "audio"))
+        file_path = download_media(url, audio_only=(action == "audio"), progress_callback=progress_hook)
 
         # Upload to GoFile
+        await bot.edit_message_text(
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id,
+            text="📤 Uploading to GoFile..."
+        )
         link = upload_to_gofile(file_path)
 
-        await callback.message.edit_text(
-            f"✅ Done!\n🔗 Download link:\n{link}"
+        await bot.edit_message_text(
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id,
+            text=f"✅ Done!\n🔗 Download link:\n{link}"
         )
 
         if os.path.exists(file_path):
             os.remove(file_path)
 
     except Exception as e:
-        await callback.message.edit_text(f"❌ Error: {e}")
+        await bot.edit_message_text(
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id,
+            text=f"❌ Error: {e}"
+        )
 
 # --- run ---
 async def main():
