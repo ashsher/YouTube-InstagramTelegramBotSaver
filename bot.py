@@ -6,6 +6,7 @@ import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message
+import sys
 
 # === CONFIG ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # set in env
@@ -13,6 +14,13 @@ GOFILE_API_URL = "https://api.gofile.io"
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
+
+# === FFMPEG PATH ===
+if sys.platform.startswith("win"):  # Windows local testing
+    FFMPEG_PATH = r"D:\coding\python\projects\YouTube&InstagramVideoSaverTGBot\bin\ffmpeg-8.0-essentials_build\bin\ffmpeg.exe"
+else:  # Linux / Render deployment
+    # assumes ffmpeg is in your project folder: bin/ffmpeg
+    FFMPEG_PATH = os.path.join(os.getcwd(), "bin", "ffmpeg")
 
 # --- Upload file to GoFile ---
 def upload_to_gofile(file_path: str) -> str:
@@ -33,6 +41,7 @@ def download_media(url: str, audio_only: bool, progress_callback=None) -> str:
         "outtmpl": "%(title).80s.%(ext)s",
         "noplaylist": True,
         "quiet": True,
+        "ffmpeg_location": FFMPEG_PATH
     }
 
     if progress_callback:
